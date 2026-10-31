@@ -1,5 +1,6 @@
 import * as usersRepository from '../repositories/users.repository.js';
-import { hashPassword } from '../utils/hash.js';
+import { hashPassword, comparePassword } from '../utils/hash.js';
+import { signToken } from '../utils/jwt.js';
 import { AppError } from '../utils/AppError.js';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -54,4 +55,19 @@ export const register = async ({ first_name, last_name, email, password }) => {
     }
     throw error;
   }
+};
+
+export const login = async ({ email, password }) => {
+  if ([email, password].some(isEmpty)) {
+    throw new AppError('Faltan campos obligatorios', 400);
+  }
+
+  const user = await usersRepository.getByEmail(email.trim().toLowerCase());
+  const isValidPassword = user ? await comparePassword(password, user.password) : false;
+
+  if (!isValidPassword) {
+    throw new AppError('Credenciales inválidas', 401);
+  }
+
+  return signToken({ id: String(user._id), email: user.email, role: user.role });
 };

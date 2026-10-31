@@ -1,6 +1,6 @@
 # Plataforma de Eventos e Inscripciones
 
-API REST para gestionar eventos e inscripciones. Este proyecto corresponde a Backend II: la base arquitectónica (Pre-entrega 1) y el registro seguro de usuarios (Pre-entrega 2), organizado por capas y listo para escalar.
+API REST para gestionar eventos e inscripciones. Este proyecto corresponde a Backend II: la base arquitectónica (Pre-entrega 1), el registro seguro de usuarios (Pre-entrega 2) y la autenticación con JWT y cookies (Pre-entrega 3), organizado por capas y listo para escalar.
 
 **Temática elegida:** plataforma de eventos e inscripciones (con control de cupos, roles y notificaciones en próximas entregas).
 
@@ -10,13 +10,15 @@ API REST para gestionar eventos e inscripciones. Este proyecto corresponde a Bac
 - Express
 - MongoDB con Mongoose
 - bcrypt (hash de contraseñas)
+- jsonwebtoken (JWT)
+- cookie-parser
 - dotenv
 
 ## Instalación
 
 ```bash
-git clone https://github.com/SebastianPolicastro/proyecto-eventos-2.git
-cd proyecto-eventos-2
+git clone <https://github.com/SebastianPolicastro/proyecto-eventos-3>
+cd <proyecto-eventos-3>
 npm install
 ```
 
@@ -30,18 +32,19 @@ cp .env.example .env
 
 En Windows: `copy .env.example .env`.
 
-| Variable     | Descripción                                        |
-|--------------|----------------------------------------------------|
-| `PORT`       | Puerto donde corre el servidor (default 8080)      |
-| `NODE_ENV`   | Entorno de ejecución (`development`, `production`) |
-| `MONGO_URL`  | URL de conexión a MongoDB (local o Atlas)          |
-| `JWT_SECRET` | Secreto para firmar los JWT (próximas entregas)    |
+| Variable         | Descripción                                             |
+|------------------|---------------------------------------------------------|
+| `PORT`           | Puerto donde corre el servidor (default 8080)           |
+| `NODE_ENV`       | Entorno de ejecución (`development`, `production`)      |
+| `MONGO_URL`      | URL de conexión a MongoDB (local o Atlas)               |
+| `JWT_SECRET`     | Secreto con el que se firman los JWT                    |
+| `JWT_EXPIRES_IN` | Duración del token (por ejemplo `1h`, `30m`, `7d`)      |
 
 El archivo `.env` no se sube al repositorio.
 
 ## Cómo ejecutar
 
-Hace falta tener MongoDB disponible (local o MongoDB Atlas) y `MONGO_URL` configurada en el `.env`.
+Hace falta tener MongoDB disponible (local o MongoDB Atlas) y las variables configuradas en el `.env`.
 
 ```bash
 npm start      # producción
@@ -65,22 +68,24 @@ proyecto-eventos/
 │   ├── controllers/
 │   │   ├── health.controller.js
 │   │   ├── events.controller.js
-│   │   └── sessions.controller.js
+│   │   └── sessions.controller.js   # register, login, current, logout
 │   ├── services/
 │   │   ├── events.service.js
-│   │   └── sessions.service.js      # validaciones y lógica del registro
+│   │   └── sessions.service.js      # validaciones, registro y login
 │   ├── repositories/
 │   │   ├── events.repository.js
 │   │   └── users.repository.js
 │   ├── dao/
 │   │   ├── events.dao.js
-│   │   └── users.dao.js             # acceso a la colección de usuarios
+│   │   └── users.dao.js
 │   ├── models/
 │   │   ├── User.js
 │   │   └── Event.js
-│   ├── middlewares/                 # vacía por ahora
+│   ├── middlewares/
+│   │   └── auth.middleware.js       # lee la cookie, verifica el JWT y carga req.user
 │   └── utils/
-│       ├── hash.js                  # helper de bcrypt reutilizable
+│       ├── hash.js                  # bcrypt (hash y comparación)
+│       ├── jwt.js                   # firmar y verificar JWT
 │       └── AppError.js              # error con código HTTP
 ├── .env.example
 ├── .gitignore
@@ -92,19 +97,36 @@ Flujo de una request: `routes → controllers → services → repositories → 
 
 ## Rutas disponibles
 
-| Método | Ruta                     | Descripción                                     | Respuesta |
-|--------|--------------------------|-------------------------------------------------|-----------|
-| GET    | `/api/health`            | Verifica que el servidor esté activo            | `200` `{ "status": "ok", "message": "Servidor activo" }` |
-| GET    | `/api/events`            | Lista de eventos (vacía por ahora)              | `200` `{ "status": "success", "payload": [] }` |
-| POST   | `/api/sessions/register` | Registro de usuarios                            | `201`, `400` o `409` (ver abajo) |
-| POST   | `/api/sessions/login`    | Login (estructura inicial, sin lógica)          | `501` |
-| GET    | `/api/sessions/current`  | Usuario actual (estructura inicial, sin lógica) | `501` |
+| Método | Ruta                     | Descripción                                          | Auth |
+|--------|--------------------------|------------------------------------------------------|------|
+| GET    | `/api/health`            | Verifica que el servidor esté activo                 | No   |
+| GET    | `/api/events`            | Lista de eventos (vacía por ahora)                   | No   |
+| POST   | `/api/sessions/register` | Registro de usuarios                                 | No   |
+| POST   | `/api/sessions/login`    | Login, guarda el JWT en la cookie `currentUser`      | No   |
+| GET    | `/api/sessions/current`  | Devuelve el usuario autenticado                      | Sí   |
+| POST   | `/api/sessions/logout`   | Cierra la sesión eliminando la cookie                | No   |
 
-## Registro de usuarios
+## Detalle de las rutas
 
-`POST /api/sessions/register`
+### GET /api/health
 
-### Campos que espera el body (JSON)
+Respuesta `200`:
+
+```json
+{ "status": "ok", "message": "Servidor activo" }
+```
+
+### GET /api/events
+
+Respuesta `200` (lista vacía por ahora):
+
+```json
+{ "status": "success", "payload": [] }
+```
+
+### POST /api/sessions/register
+
+Campos del body:
 
 | Campo        | Obligatorio | Detalle |
 |--------------|-------------|---------|
@@ -115,15 +137,13 @@ Flujo de una request: `routes → controllers → services → repositories → 
 
 El rol no se puede enviar desde el body: todos los usuarios registrados quedan con rol `user`. Los valores posibles del modelo son `user`, `organizer` y `admin`.
 
-### Ejemplo de request
+Request:
 
 ```json
 { "first_name": "Ana", "last_name": "Pérez", "email": "Ana@Mail.com ", "password": "Secreta123" }
 ```
 
-### Respuestas
-
-`201` usuario creado (sin contraseña, ni en texto plano ni hasheada):
+Respuesta `201` (sin contraseña):
 
 ```json
 {
@@ -138,21 +158,77 @@ El rol no se puede enviar desde el body: todos los usuarios registrados quedan c
 }
 ```
 
-`400` campos faltantes, email inválido o contraseña corta:
+Respuesta `400` (campos faltantes, email inválido o contraseña corta):
 
 ```json
 { "status": "error", "message": "Faltan campos obligatorios" }
 ```
 
-`409` email ya registrado:
+Respuesta `409` (email ya registrado):
 
 ```json
 { "status": "error", "message": "El email ya está registrado" }
 ```
 
-### Cómo probarlo
+### POST /api/sessions/login
 
-1. Tener MongoDB disponible y `MONGO_URL` configurada en el `.env`.
+Campos del body: `email` y `password`, ambos obligatorios.
+
+Request:
+
+```json
+{ "email": "ana@mail.com", "password": "Secreta123" }
+```
+
+Respuesta `200`. Además setea la cookie `currentUser` con el JWT (`httpOnly`, `sameSite: lax`, duración de 1 hora, y `secure` solo en producción):
+
+```json
+{ "status": "success", "message": "Login correcto" }
+```
+
+El JWT se firma con `JWT_SECRET`, vence según `JWT_EXPIRES_IN` y contiene solo `id`, `email` y `role`.
+
+Respuesta `401` (el mensaje es el mismo si el email no existe o si la contraseña es incorrecta):
+
+```json
+{ "status": "error", "message": "Credenciales inválidas" }
+```
+
+Respuesta `400` (falta email o password):
+
+```json
+{ "status": "error", "message": "Faltan campos obligatorios" }
+```
+
+### GET /api/sessions/current
+
+Requiere la cookie `currentUser`. El middleware `auth` verifica el JWT y guarda el payload en `req.user`.
+
+Respuesta `200`:
+
+```json
+{ "status": "success", "payload": { "id": "665f2a...", "email": "ana@mail.com", "role": "user" } }
+```
+
+Respuesta `401` (sin cookie, o token inválido o expirado):
+
+```json
+{ "status": "error", "message": "No autenticado" }
+```
+
+### POST /api/sessions/logout
+
+Elimina la cookie `currentUser`.
+
+Respuesta `200`:
+
+```json
+{ "status": "success", "message": "Sesión cerrada" }
+```
+
+## Cómo probar
+
+1. Tener MongoDB disponible y las variables configuradas en el `.env`.
 2. Levantar el servidor con `npm start` (debe mostrar `Conectado a MongoDB`).
-3. Enviar un `POST` a `http://localhost:8080/api/sessions/register` con Postman o Thunder Client, con el body de ejemplo.
-4. Casos a verificar: registro exitoso, campos faltantes, email con formato inválido, email ya registrado, y que en la base la contraseña aparezca hasheada (`$2b$10$...`) y que la respuesta no la incluya.
+3. Usar Postman o Thunder Client, que guardan la cookie automáticamente entre requests.
+4. Casos a verificar: registro exitoso, login, `/current` con 200, logout y `/current` con 401; login con email inexistente; login con contraseña incorrecta; `/current` sin cookie; `/current` con un token manipulado o vencido.
